@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: mHapTk
+Version: 1.0
+Summary: mHapTk is a tool kit for analysis of DNA methylation haplotypes. It has 5 sub-commands: tanghulu, stat, genomeWide, R2 and MHBDiscovery
+Home-page: UNKNOWN
+Author: ckw
+Author-email: 1353595807@qq.com
+License: UNKNOWN
+Description: UNKNOWN
+Platform: UNKNOWN

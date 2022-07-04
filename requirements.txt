@@ -1,0 +1,8 @@
+matplotlib==3.5.2
+numpy==1.22.4
+pandas==1.4.2
+pytabix==0.1
+scipy==1.8.1
+seaborn==0.11.2
+setuptools==62.6.0
+tqdm==4.64.0
