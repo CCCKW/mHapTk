@@ -24,9 +24,14 @@ import matplotlib.gridspec as gridspec
 import matplotlib.colors as mcolors
 import random
 
+try:
+    from .mhb_discovery import add_arguments as add_mhb_arguments, run as run_mhb_discovery
+except ImportError:  # run as a script: python src/mhaptk.py
+    from mhb_discovery import add_arguments as add_mhb_arguments, run as run_mhb_discovery
+
 matplotlib.use('Agg')
 plt.switch_backend('agg')
-version = '1.0'
+version = '1.3'
 
 class cpgAnnotation:
     def __init__(self, iChr, posArray):
@@ -1771,205 +1776,6 @@ class R2_c:
         cb1.ax.tick_params(labelsize=20)
         fig.savefig(outpdf)
 
-class IR:
-
-    def __init__(self, iChr, iStart, iEnd, fullText):
-        self.iChr = iChr
-        self.iStart = int(iStart)
-        self.iEnd = int(iEnd)
-        self.fullText = fullText
-
-    def toString(self):
-        self.name = self.iChr + ":" + str(self.iStart) + "-" + str(self.iEnd)
-        return self.name
-
-class HT_mbh:
-
-    def __init__(self, hChr, hStart, hEnd, HapMet, count, strand):
-        self.hChr = hChr
-        self.hStart = int(hStart)
-        self.hEnd = int(hEnd)
-        self.HapMet = HapMet
-        self.count = int(count)
-        self.WC = strand
-
-    def toString(self):
-        return self.hChr + '\t' + str(self.hStart) + '\t' + str(self.hEnd) + '\t' + self.HapMet + '\t' + str(self.count) + '\t' + str(self.WC)
-
-class MHB:
-    def __init__(self):
-        pass
-
-    def loadIR(self, iFile, BED=False):
-
-        irList = []
-        f = open(iFile, "r")
-        temp = f.read().splitlines()
-        f.close()
-
-        for text in temp:
-            chunks = text.split("\t")
-            if len(chunks) < 3:
-                print("Interval not in correct format.")
-                sys.exit(-1)
-            if BED:
-                queryIR = IR(chunks[0], int(chunks[1]) + 1, chunks[2], text)
-            else:
-                queryIR = IR(chunks[0], chunks[1], chunks[2], text)
-            irList.append(queryIR)
-        return irList
-
-    def tabixHT(self, htGZ, queryIR, strand='both'):
-        tb = tabix.open(htGZ)
-        htList = []
-        try:
-            records = tb.query(queryIR.iChr, queryIR.iStart, queryIR.iEnd)
-        except:
-            return htList
-        for rd in records:
-            if len(rd) < 5:
-                continue
-            if strand == 'plus' and rd[5] != '+':
-                continue
-            if strand == 'minus' and rd[5] != '-':
-                continue
-            htList.append(HT_mbh(rd[0], rd[1], rd[2], rd[3], rd[4], rd[5]))
-        return htList
-
-    def tabixCPG(self, htGZ, queryIR, shift=500):
-
-        tb = tabix.open(htGZ)
-        records = tb.query(queryIR.iChr, queryIR.iStart - shift, queryIR.iEnd + shift)
-        posArray = []
-
-        for rd in records:
-            if len(rd) < 3:
-                continue
-            posArray.append(int(rd[1]))
-
-        return cpgAnnotation(queryIR.iChr, posArray)
-
-    def buildBinaryMatrix(self, htList, cpgAnn):
-        posArray = cpgAnn.posArray
-        posDict = dict()
-        Nc = len(posArray)
-        Nr = len(htList)
-
-        for i in range(Nc):
-            posDict[cpgAnn.iChr + ":" + str(posArray[i])] = i
-
-        MC = np.zeros((len(htList), Nc), dtype='int')
-        M0 = np.zeros((len(htList), Nc), dtype='int')
-        M1 = np.zeros((len(htList), Nc), dtype='int')
-
-        count = np.zeros(Nr, dtype='int')
-        strand = np.zeros(Nr, dtype='int')
-
-        for i in range(Nr):
-            ht = htList[i]
-            pos = ht.hChr + ":" + str(ht.hStart)
-            count[i] = ht.count
-            if ht.WC == "+":
-                strand[i] = 1
-            if pos not in posDict:
-                print("Haplotype positions are out of range.")
-                sys.exit(-1)
-            Idx = posDict[pos]
-            HapMet = ht.HapMet
-            for j in range(len(HapMet)):
-                MC[i, Idx + j] = 1
-                if HapMet[j] == "0":
-                    M0[i, Idx + j] = 1
-                elif HapMet[j] == "1":
-                    M1[i, Idx + j] = 1
-                else:
-                    print("Haplotypes must be 0/1 only.")
-                    sys.exit(-1)
-
-        return [MC, M0, M1, count, strand]
-
-    def count2pos(self,MC, M0, M1, count, pi, pj):
-        if pi >= np.shape(MC)[1] or pj >= np.shape(MC)[1]:
-            print("pi or pj are out of range.")
-            sys.exit(-1)
-
-        iAll = MC[..., pi] + MC[..., pj] == 2
-        iN00 = M0[..., pi] + M0[..., pj] == 2
-        iN01 = M0[..., pi] + M1[..., pj] == 2
-        iN10 = M1[..., pi] + M0[..., pj] == 2
-        iN11 = M1[..., pi] + M1[..., pj] == 2
-
-        N00 = sum(count[np.logical_and(iAll, iN00)])
-        N01 = sum(count[np.logical_and(iAll, iN01)])
-        N10 = sum(count[np.logical_and(iAll, iN10)])
-        N11 = sum(count[np.logical_and(iAll, iN11)])
-
-        return [N00, N01, N10, N11]
-
-    def get_r2(self, n_11, n_10, n_01, n_00):
-        n = n_11 + n_10 + n_01 + n_00
-
-        if n == 0:
-            return (None, None)
-
-        P_A = (n_10 + n_11) / n
-        P_B = (n_01 + n_11) / n
-
-        # calculate pval
-        D = n_11 / n - P_A * P_B
-        Num = D * D
-
-        Den = P_A * (1 - P_A) * P_B * (1 - P_B)
-
-        if Den == 0:
-            r2 = None
-        else:
-            r2 = Num / Den
-
-        if D < 0:
-            r2 = -1 * r2  # add sign to r2
-
-        # calculate pval
-        pval = 1 - binom.cdf(k=n_11 - 1, n=n, p=P_A * P_B)
-        return (r2, pval)
-
-    # Get r square from array [n_11, n_10, n_01, n_00]
-    def LD(self, array):
-        return self.get_r2(array[0], array[1], array[2], array[3])
-
-    def getMHB(self, MC, M0, M1, count, cpgAnn, window=3, r_square=0.5, p_value=0.05):
-        Nc = np.shape(MC)[1]
-        start = 0
-        end = 0
-        mhb = []
-        while end < (Nc - 1):
-            end += 1
-            extend = True
-            # print("running", end)
-            for i in range(1, window):
-                xPOS = end - i
-                if xPOS < 0:
-                    continue
-                [N00, N01, N10, N11] = self.count2pos(MC, M0, M1, count, xPOS, end)
-                [r2, pval] = self.LD([N11, N10, N01, N00])
-                if r2 is None or r2 < r_square or pval > p_value:
-                    extend = False
-                    break
-            if not extend:
-                candidate = [start, end - 1]
-                size = (end - start)
-                start = end
-                if size >= window:
-                    mhb.append(candidate)
-        if end - start >= window:
-            mhb.append([start, end - 1])
-        irMHB = []
-        for blocks in mhb:
-            irMHB.append(IR(cpgAnn.iChr, cpgAnn.posArray[blocks[0]], cpgAnn.posArray[blocks[1]], ''))
-        return irMHB
-
-
-
 def main():
 
     parser = argparse.ArgumentParser()
@@ -2027,14 +1833,7 @@ def main():
 
 
     MHBDiscovery = subparsers1.add_parser('MHBDiscovery', help='identification of methylation haplotype blocks within a region or genome-wide')
-    MHBDiscovery.add_argument('--mhapPath', type=str,required=True, help='input file, mhap.gz format, generated by mHapTools and indexed')
-    MHBDiscovery.add_argument('--cpgPath', type=str, required=True, help='genomic CpG file, gz format and Indexed')
-    MHBDiscovery.add_argument('--region', type=str, help='one region, in the format of chr:start-end')
-    MHBDiscovery.add_argument('--bedPath', type=str,default=None, help='input BED file')
-    MHBDiscovery.add_argument('--outputFile', type=str, required=True, help='output file name')
-    MHBDiscovery.add_argument("--window", type=int, default=5, required=False, help="size of core window [5]")
-    MHBDiscovery.add_argument("--r_square", type=float, default=0.5, required=False, help="R-square cutoff [0.5]")
-    MHBDiscovery.add_argument("--p_value", type=float, default=0.05, required=False, help="P-value cutoff [0.05]")
+    add_mhb_arguments(MHBDiscovery)
     MHBDiscovery.set_defaults(func='MHBDiscovery')
 
     args = parser.parse_args()
@@ -2407,32 +2206,7 @@ def main():
             plt.savefig(resultPath, dpi=200)
 
     if args.func == "MHBDiscovery":
-        assert Path(os.path.dirname(args.outputFile)).exists(), 'outDir does not exist'
-        Time = time.time()
-        resultPath = args.outputFile
-        M = MHB()
-        irList = []
-        if args.region is not None:
-            chunks = re.split(':|-', args.region)
-            queryIR = IR(chunks[0], chunks[1], chunks[2], '')
-            irList.append(queryIR)
-        else:
-            irList = M.loadIR(args.bedPath, BED=True)
-
-        OUT = open(resultPath , "w")
-        for queryIR in irList:
-            htList = M.tabixHT(args.mhapPath, queryIR)
-            if len(htList) == 0:
-                continue
-            cpgAnn = M.tabixCPG(args.cpgPath, queryIR, shift=500)
-            [MC, M0, M1, count, strand] = M.buildBinaryMatrix(htList, cpgAnn)
-            irHB = M.getMHB(MC, M0, M1, count, cpgAnn, window=args.window, r_square=args.r_square, p_value=args.p_value)
-            for ir in irHB:
-                outString = '\t'.join([ir.iChr, str(ir.iStart), str(ir.iEnd)])
-                # print(outString)
-                OUT.write(outString + "\n")
-        OUT.close()
-        print('MHB time span:', time.time() - Time)
+        run_mhb_discovery(args)
 
 
 
